@@ -150,3 +150,149 @@ def my_channel(db: Session, access_token: str) -> dict:
         "thumbnail_url": c["snippet"]["thumbnails"].get("default", {}).get("url", ""),
         "uploads_playlist_id": c["contentDetails"]["relatedPlaylists"]["uploads"],
     }
+
+
+# ───────────────────────── Videos propios ─────────────────────────
+def uploads_playlist_id(channel_id: str) -> str:
+    """Convención de YouTube: la playlist de subidas es 'UU' + el resto del id del canal."""
+    return "UU" + channel_id[2:]
+
+
+def parse_duration(iso: str) -> int:
+    """PT1H2M3S → segundos."""
+    import re
+    m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
+    if not m:
+        return 0
+    h, mi, s = (int(x) if x else 0 for x in m.groups())
+    return h * 3600 + mi * 60 + s
+
+
+def list_own_videos(db: Session, access_token: str, channel_id: str, max_results: int = 25) -> list[dict]:
+    """Últimos videos del canal propio (incluye privados y no listados). 2 unidades."""
+    pl = yt_get(db, "playlistItems.list", {
+        "part": "snippet,contentDetails",
+        "playlistId": uploads_playlist_id(channel_id),
+        "maxResults": min(max_results, 50),
+    }, access_token)
+    ids = [it["contentDetails"]["videoId"] for it in pl.get("items", [])]
+    if not ids:
+        return []
+    vids = yt_get(db, "videos.list", {
+        "part": "snippet,contentDetails,status,statistics",
+        "id": ",".join(ids),
+    }, access_token)
+    out = []
+    for v in vids.get("items", []):
+        sn, cd, st = v["snippet"], v["contentDetails"], v.get("status", {})
+        out.append({
+            "video_id": v["id"],
+            "title": sn.get("title", ""),
+            "description": sn.get("description", ""),
+            "tags": sn.get("tags", []),
+            "thumbnail_url": (sn.get("thumbnails", {}).get("medium") or sn.get("thumbnails", {}).get("default") or {}).get("url", ""),
+            "published_at": sn.get("publishedAt"),
+            "duration_seconds": parse_duration(cd.get("duration", "")),
+            "privacy": st.get("privacyStatus", ""),
+            "views": int(v.get("statistics", {}).get("viewCount", 0) or 0),
+        })
+    return out
+
+
+def get_video_snippet(db: Session, access_token: str, video_id: str) -> dict:
+    data = yt_get(db, "videos.list", {"part": "snippet", "id": video_id}, access_token)
+    items = data.get("items") or []
+    if not items:
+        raise HTTPException(404, "Video no encontrado en YouTube")
+    return items[0]["snippet"]
+
+
+def update_video_metadata(db: Session, access_token: str, video_id: str, title: str, description: str, tags: list[str]) -> dict:
+    """videos.update part=snippet (50 unidades). Conserva categoría e idioma actuales."""
+    current = get_video_snippet(db, access_token, video_id)
+    snippet = {
+        "title": title[:100],
+        "description": description[:5000],
+        "tags": [t[:100] for t in tags][:60],
+        "categoryId": current.get("categoryId", "22"),
+    }
+    if current.get("defaultLanguage"):
+        snippet["defaultLanguage"] = current["defaultLanguage"]
+    return yt_put(db, "videos.update", {"part": "snippet"}, {"id": video_id, "snippet": snippet}, access_token)
+
+
+# ───────────────────────── Subtítulos del video propio ─────────────────────────
+def _srt_to_segments(srt: str) -> list[dict]:
+    """Convierte SRT en [{start: segundos, text}]."""
+    import re
+    segs = []
+    for block in re.split(r"\n\s*\n", srt.strip()):
+        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        if len(lines) < 2:
+            continue
+        m = re.search(r"(\d+):(\d+):(\d+)[,.](\d+)\s*-->", lines[0] if "-->" in lines[0] else (lines[1] if len(lines) > 1 else ""))
+        if not m:
+            continue
+        start = int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])
+        text_lines = lines[2:] if "-->" in lines[1] else lines[1:]
+        text = " ".join(text_lines)
+        text = re.sub(r"<[^>]+>", "", text)
+        if text:
+            segs.append({"start": start, "text": text})
+    return segs
+
+
+def get_own_transcript(db: Session, access_token: str, video_id: str) -> tuple[list[dict], str]:
+    """
+    Devuelve (segmentos, fuente). Fuente 'oficial' = captions.download; 'no_oficial' = librería de respaldo.
+    Intenta primero la vía oficial (subtítulos subidos o automáticos del canal propio).
+    """
+    # 1) Vía oficial
+    try:
+        tracks = yt_get(db, "captions.list", {"part": "snippet", "videoId": video_id}, access_token).get("items", [])
+    except HTTPException:
+        tracks = []
+    # Preferimos subtítulos manuales; si no hay, los automáticos (asr)
+    tracks.sort(key=lambda t: (t["snippet"].get("trackKind") == "asr", t["snippet"].get("language") != "es"))
+    for t in tracks:
+        r = requests.get(
+            f"{YT_API}/captions/{t['id']}", params={"tfmt": "srt"},
+            headers={"Authorization": f"Bearer {access_token}"}, timeout=60,
+        )
+        log_quota(db, "captions.download")
+        if r.status_code == 200 and r.text.strip():
+            segs = _srt_to_segments(r.text)
+            if segs:
+                return segs, "oficial"
+    # 2) Respaldo no oficial (misma librería que usan las extensiones)
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        api = YouTubeTranscriptApi()
+        fetched = api.fetch(video_id, languages=["es", "es-419", "es-ES", "en"])
+        segs = [{"start": int(s.start), "text": s.text.replace("\n", " ")} for s in fetched]
+        if segs:
+            return segs, "no_oficial"
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            404,
+            "No se encontraron subtítulos para este video. Si es reciente, YouTube tarda unos minutos en generar los automáticos; "
+            f"si es privado, la vía de respaldo no puede leerlo. Detalle: {str(e)[:120]}",
+        )
+    raise HTTPException(404, "El video no tiene subtítulos disponibles")
+
+
+def segments_to_text(segs: list[dict], max_chars: int = 90000) -> str:
+    """Texto con marcas [mm:ss] cada ~30 s para que la IA pueda proponer capítulos."""
+    out, last_mark = [], -999
+    for s in segs:
+        if s["start"] - last_mark >= 30:
+            m, sec = divmod(s["start"], 60)
+            h, m = divmod(m, 60)
+            stamp = f"[{h}:{m:02d}:{sec:02d}]" if h else f"[{m:02d}:{sec:02d}]"
+            out.append(f"\n{stamp} ")
+            last_mark = s["start"]
+        out.append(s["text"])
+    text = " ".join(out)
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n[... transcripción recortada ...]"
+    return text

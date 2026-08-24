@@ -171,7 +171,8 @@ def on_startup():
 
 
 # ───────────────────────── Routers (al final: evita import circular) ─────────────────────────
-from routers import auth, own_channels  # noqa: E402
+from routers import auth, own_channels, metadata  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(own_channels.router)
+app.include_router(metadata.router)
