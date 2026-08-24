@@ -39,6 +39,20 @@ def update_niche(niche_id: int, body: NicheBody, role: str = Depends(require_adm
     return {"ok": True}
 
 
+@router.delete("/niches/{niche_id}")
+def delete_niche(niche_id: int, role: str = Depends(require_admin), db: Session = Depends(get_db)):
+    n = db.get(Niche, niche_id)
+    if not n:
+        raise HTTPException(404, "Nicho no encontrado")
+    for c in n.own_channels:
+        c.niche_id = None
+    if n.tracked_channels:
+        raise HTTPException(400, "Este nicho tiene canales monitoreados; quítalos primero")
+    db.delete(n)
+    db.commit()
+    return {"ok": True}
+
+
 # ───────────────────────── Canales propios ─────────────────────────
 def _public(c: OwnChannel) -> dict:
     """Vista sin tokens: es lo único que ve el frontend (editores incluidos)."""
