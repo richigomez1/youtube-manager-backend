@@ -33,12 +33,17 @@ CRON_SECRET = os.environ.get("CRON_SECRET", "")
 TOKEN_HOURS = 24 * 7  # sesión de una semana
 
 # ───────────────────────── Base de datos ─────────────────────────
-# Render entrega "postgres://"; SQLAlchemy 2 + psycopg3 necesita "postgresql+psycopg://"
-_db_url = DATABASE_URL
-for prefix in ("postgres://", "postgresql://"):
-    if _db_url.startswith(prefix):
-        _db_url = "postgresql+psycopg://" + _db_url[len(prefix):]
-        break
+# DATABASE_URL puede ser la URL de la instancia tal cual la da Render (apunta a burdier_db).
+# Aquí SIEMPRE forzamos nuestra propia base: youtube_manager. Zentrix/Burdier no se tocan.
+from sqlalchemy.engine import make_url  # noqa: E402
+
+DB_NAME = "youtube_manager"
+
+_url = make_url(DATABASE_URL.strip())
+if _url.drivername in ("postgres", "postgresql"):
+    _url = _url.set(drivername="postgresql+psycopg")
+_url = _url.set(database=DB_NAME)
+_db_url = _url  # URL final, con la base correcta
 
 engine = create_engine(_db_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -46,27 +51,27 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 def ensure_database_exists() -> None:
     """
-    Si la base de datos de la URL no existe todavía (primer deploy), la crea.
+    Si la base 'youtube_manager' no existe todavía (primer deploy), la crea.
     Se conecta a la base 'postgres' de la misma instancia y ejecuta CREATE DATABASE.
     Así no hace falta psql ni terminal.
     """
     from sqlalchemy import text
-    from sqlalchemy.engine import make_url
     from sqlalchemy.exc import OperationalError
 
     try:
         with engine.connect():
+            print(f"[startup] Conectado a la base '{DB_NAME}'")
             return  # ya existe
     except OperationalError as e:
         if "does not exist" not in str(e):
             raise
-    url = make_url(_db_url)
-    dbname = url.database
-    admin_engine = create_engine(url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    admin_engine = create_engine(_db_url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     with admin_engine.connect() as conn:
-        conn.execute(text(f'CREATE DATABASE "{dbname}"'))
+        conn.execute(text(f'CREATE DATABASE "{DB_NAME}"'))
+        # Limpieza de un intento fallido anterior que creó una base llamada "None"
+        conn.execute(text('DROP DATABASE IF EXISTS "None"'))
     admin_engine.dispose()
-    print(f"[startup] Base de datos '{dbname}' creada")
+    print(f"[startup] Base de datos '{DB_NAME}' creada")
 
 
 def get_db():
