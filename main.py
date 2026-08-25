@@ -92,6 +92,7 @@ app = FastAPI(title="YouTube Manager", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[FRONTEND_URL, "http://localhost:5173", "http://localhost:3000"],
+    allow_origin_regex=r"^(chrome-extension://.*|https://.*\.vercel\.app)$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -193,6 +194,11 @@ def migrate_columns() -> None:
         "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS subs_gained_7d INTEGER DEFAULT 0",
         "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS views_gained_7d INTEGER DEFAULT 0",
         "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS handle VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE rotating_templates ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT 'en'",
+        "ALTER TABLE rotating_templates ADD COLUMN IF NOT EXISTS date_offset_days INTEGER DEFAULT 1",
+        "ALTER TABLE rotating_templates ADD COLUMN IF NOT EXISTS tags_template TEXT DEFAULT ''",
+        "ALTER TABLE rotating_templates ALTER COLUMN video_id DROP NOT NULL",
+        "ALTER TABLE rotating_templates ALTER COLUMN own_channel_id DROP NOT NULL",
     ]
     with engine.begin() as conn:
         for st in stmts:
@@ -200,9 +206,10 @@ def migrate_columns() -> None:
 
 
 # ───────────────────────── Routers (al final: evita import circular) ─────────────────────────
-from routers import auth, own_channels, metadata, monitor  # noqa: E402
+from routers import auth, own_channels, metadata, monitor, templates  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(own_channels.router)
 app.include_router(metadata.router)
 app.include_router(monitor.router)
+app.include_router(templates.router)

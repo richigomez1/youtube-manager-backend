@@ -68,17 +68,20 @@ class RotatingTemplate(Base):
     __tablename__ = "rotating_templates"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    own_channel_id: Mapped[int] = mapped_column(ForeignKey("own_channels.id"))
+    own_channel_id: Mapped[int | None] = mapped_column(ForeignKey("own_channels.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(100))
-    video_id: Mapped[str] = mapped_column(String(32))  # video de YouTube que se actualiza
+    video_id: Mapped[str | None] = mapped_column(String(32), nullable=True)  # (opcional) video fijo que se actualiza
+    language: Mapped[str] = mapped_column(String(5), default="en")
+    date_offset_days: Mapped[int] = mapped_column(Integer, default=1)       # 1 = la fecha de mañana
     title_template: Mapped[str] = mapped_column(Text, default="")
     description_template: Mapped[str] = mapped_column(Text, default="")
+    tags_template: Mapped[str] = mapped_column(Text, default="")             # etiquetas separadas por coma, con variables
     fixed_tags: Mapped[list] = mapped_column(JSON, default=list)
     auto_daily: Mapped[bool] = mapped_column(Boolean, default=False)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    own_channel: Mapped["OwnChannel"] = relationship(back_populates="templates")
+    own_channel: Mapped["OwnChannel | None"] = relationship(back_populates="templates")
 
 
 # ───────────────────────── Historial de metadata generada (función A + extras) ─────────────────────────
