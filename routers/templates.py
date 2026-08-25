@@ -42,20 +42,26 @@ def local_today() -> datetime:
 def build_variables(language: str, sign_index: int | None, date: datetime) -> dict:
     lang = language if language in SIGNS else "en"
     mes = MONTHS[lang][date.month - 1]
+    mes_may = mes[:1].upper() + mes[1:]
     if lang == "en":
-        fecha = f"{mes} {date.day} {date.year}"          # August 26 2026 (formato del canal)
+        fecha = f"{mes} {date.day} {date.year}"          # August 26 2026 (formato del canal EN)
         fecha_larga = f"{WEEKDAYS[lang][date.weekday()]}, {mes} {date.day}, {date.year}"
+    elif lang == "pt":
+        fecha = f"{date.day} {mes_may} {date.year}"      # 26 Agosto 2026 (formato del canal PT)
+        fecha_larga = f"{WEEKDAYS[lang][date.weekday()]}, {date.day} de {mes} de {date.year}"
     else:
-        fecha = f"{date.day} de {mes} de {date.year}"    # 26 de agosto de 2026
-        fecha_larga = f"{WEEKDAYS[lang][date.weekday()]} {date.day} de {mes} de {date.year}"
+        fecha = f"{date.day} De {mes_may} {date.year}"   # 26 De Agosto 2026 (formato del canal ES)
+        fecha_larga = f"{WEEKDAYS[lang][date.weekday()].capitalize()} {date.day} De {mes_may} {date.year}"
     v = {
         "fecha": fecha,
         "fecha_larga": fecha_larga,
         "dia": str(date.day),
         "mes": mes,
+        "mes_may": mes_may,
         "mes_num": f"{date.month:02d}",
         "anio": str(date.year),
         "dia_semana": WEEKDAYS[lang][date.weekday()],
+        "dia_semana_may": WEEKDAYS[lang][date.weekday()].capitalize(),
         "fecha_corta": date.strftime("%d/%m/%Y"),
     }
     if sign_index is not None:
@@ -80,9 +86,9 @@ def render(text: str, variables: dict) -> str:
 VARIABLES_HELP = [
     ("{signo}", "Libra / Escorpio"), ("{signo_min}", "libra"), ("{signo_may}", "LIBRA"), ("{emoji}", "♎️"),
     ("{signo_en}", "Libra (siempre en inglés)"), ("{signo_en_min}", "libra (inglés)"),
-    ("{fecha}", "August 26 2026 · 26 de agosto de 2026"), ("{fecha_larga}", "Wednesday, August 26, 2026"),
-    ("{dia}", "26"), ("{mes}", "August / agosto"), ("{mes_num}", "08"), ("{anio}", "2026"),
-    ("{dia_semana}", "Wednesday / miércoles"), ("{fecha_corta}", "26/08/2026"),
+    ("{fecha}", "EN: August 26 2026 · PT: 26 Agosto 2026 · ES: 26 De Agosto 2026"), ("{fecha_larga}", "Wednesday, August 26, 2026"),
+    ("{dia}", "26"), ("{mes}", "August / agosto"), ("{mes_may}", "Agosto"), ("{mes_num}", "08"), ("{anio}", "2026"),
+    ("{dia_semana}", "Wednesday / miércoles"), ("{dia_semana_may}", "Miércoles"), ("{fecha_corta}", "26/08/2026"),
 ]
 
 
