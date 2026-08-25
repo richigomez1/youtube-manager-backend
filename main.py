@@ -143,9 +143,10 @@ def require_admin(role: str = Depends(current_role)) -> str:
     return role
 
 
-def require_cron(x_cron_secret: Optional[str] = Header(None)) -> None:
-    """Protege los endpoints que dispara el ping externo programado."""
-    if not CRON_SECRET or x_cron_secret != CRON_SECRET:
+def require_cron(x_cron_secret: Optional[str] = Header(None), secret: Optional[str] = Query(None)) -> None:
+    """Protege los endpoints que dispara el ping externo programado (cabecera X-Cron-Secret o ?secret=)."""
+    given = x_cron_secret or secret
+    if not CRON_SECRET or given != CRON_SECRET:
         raise HTTPException(403, "Cron secret inválido")
 
 
@@ -168,11 +169,40 @@ def on_startup():
     from models import Base
     ensure_database_exists()
     Base.metadata.create_all(bind=engine)
+    migrate_columns()
+
+
+def migrate_columns() -> None:
+    """
+    create_all no añade columnas a tablas ya creadas. Aquí se añaden las nuevas
+    con ADD COLUMN IF NOT EXISTS (idempotente: se puede ejecutar en cada arranque).
+    """
+    from sqlalchemy import text
+    stmts = [
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS is_short BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS fire_level INTEGER DEFAULT 0",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS keyword VARCHAR(255) DEFAULT ''",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS status VARCHAR(20) DEFAULT ''",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS views_at_3d INTEGER",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS views_at_7d INTEGER",
+        "ALTER TABLE videos ADD COLUMN IF NOT EXISTS first_fire_at TIMESTAMPTZ",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS channel_created_at TIMESTAMPTZ",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS total_views INTEGER DEFAULT 0",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS video_count INTEGER DEFAULT 0",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS language VARCHAR(5) DEFAULT ''",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS subs_gained_7d INTEGER DEFAULT 0",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS views_gained_7d INTEGER DEFAULT 0",
+        "ALTER TABLE tracked_channels ADD COLUMN IF NOT EXISTS handle VARCHAR(100) DEFAULT ''",
+    ]
+    with engine.begin() as conn:
+        for st in stmts:
+            conn.execute(text(st))
 
 
 # ───────────────────────── Routers (al final: evita import circular) ─────────────────────────
-from routers import auth, own_channels, metadata  # noqa: E402
+from routers import auth, own_channels, metadata, monitor  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(own_channels.router)
 app.include_router(metadata.router)
+app.include_router(monitor.router)

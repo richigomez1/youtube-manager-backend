@@ -116,6 +116,13 @@ class TrackedChannel(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_snapshot_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    channel_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    total_views: Mapped[int] = mapped_column(Integer, default=0)
+    video_count: Mapped[int] = mapped_column(Integer, default=0)
+    language: Mapped[str] = mapped_column(String(5), default="")         # es / en
+    subs_gained_7d: Mapped[int] = mapped_column(Integer, default=0)
+    views_gained_7d: Mapped[int] = mapped_column(Integer, default=0)
+    handle: Mapped[str] = mapped_column(String(100), default="")
 
     niche: Mapped["Niche"] = relationship(back_populates="tracked_channels")
     videos: Mapped[list["Video"]] = relationship(back_populates="channel")
@@ -138,8 +145,15 @@ class Video(Base):
 
     # Cache de las últimas métricas calculadas (se recalculan en cada snapshot)
     latest_views: Mapped[int] = mapped_column(Integer, default=0)
-    velocity_per_day: Mapped[float] = mapped_column(Float, default=0.0)   # vistas ganadas / día
+    velocity_per_day: Mapped[float] = mapped_column(Float, default=0.0)   # vistas ganadas / día (último tramo)
     outlier_score: Mapped[float] = mapped_column(Float, default=0.0)      # vistas ÷ promedio del canal
+    is_short: Mapped[bool] = mapped_column(Boolean, default=False)
+    fire_level: Mapped[int] = mapped_column(Integer, default=0)           # 0, 1 (🔥), 2 (🔥🔥)
+    keyword: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(20), default="")           # "", elegido, en_produccion, terminado, descartado
+    views_at_3d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    views_at_7d: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    first_fire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     channel: Mapped["TrackedChannel"] = relationship(back_populates="videos")
     snapshots: Mapped[list["VideoSnapshot"]] = relationship(back_populates="video")
@@ -204,3 +218,24 @@ class QuotaLog(Base):
     day: Mapped[str] = mapped_column(String(10), unique=True)  # YYYY-MM-DD hora Pacífico
     units_used: Mapped[int] = mapped_column(Integer, default=0)
     searches_used: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ───────────────────────── Snapshot diario de canal (para ver quién sube) ─────────────────────────
+class ChannelSnapshot(Base):
+    __tablename__ = "channel_snapshots"
+    __table_args__ = (UniqueConstraint("channel_id", "taken_on", name="uq_channel_snapshot_day"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel_id: Mapped[int] = mapped_column(ForeignKey("tracked_channels.id"))
+    taken_on: Mapped[str] = mapped_column(String(10))
+    subscriber_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_views: Mapped[int] = mapped_column(Integer, default=0)
+    video_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+# ───────────────────────── Ajustes (umbrales de viral, etc.) ─────────────────────────
+class Setting(Base):
+    __tablename__ = "settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSON, default=dict)

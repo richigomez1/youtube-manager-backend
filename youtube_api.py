@@ -296,3 +296,95 @@ def segments_to_text(segs: list[dict], max_chars: int = 90000) -> str:
     if len(text) > max_chars:
         text = text[:max_chars] + "\n[... transcripción recortada ...]"
     return text
+
+
+# ───────────────────────── Canales ajenos (datos públicos, sin OAuth: usamos el token propio igualmente) ─────────────────────────
+def resolve_channel(db: Session, access_token: str, ref: str) -> dict:
+    """
+    Acepta: id (UC...), @handle, o URL de YouTube (youtube.com/@handle, /channel/UC..., /c/nombre, /user/nombre).
+    Devuelve datos básicos + estadísticas. 1 unidad.
+    """
+    import re
+    ref = ref.strip()
+    params = {"part": "snippet,statistics,contentDetails"}
+    m = re.search(r"/channel/(UC[\w-]{20,})", ref)
+    if m:
+        params["id"] = m[1]
+    elif re.fullmatch(r"UC[\w-]{20,}", ref):
+        params["id"] = ref
+    else:
+        m = re.search(r"@([\w.\-]+)", ref)
+        if m:
+            params["forHandle"] = "@" + m[1]
+        else:
+            m = re.search(r"/(?:c|user)/([\w.\-]+)", ref)
+            if m:
+                params["forUsername"] = m[1]
+            else:
+                params["forHandle"] = "@" + ref.lstrip("@")
+    data = yt_get(db, "channels.list", params, access_token)
+    items = data.get("items") or []
+    if not items:
+        raise HTTPException(404, "No encontré ese canal. Pega la URL del canal o su @handle.")
+    return _channel_dict(items[0])
+
+
+def _channel_dict(c: dict) -> dict:
+    sn, st, cd = c["snippet"], c.get("statistics", {}), c.get("contentDetails", {})
+    return {
+        "channel_id": c["id"],
+        "title": sn.get("title", ""),
+        "handle": sn.get("customUrl", ""),
+        "thumbnail_url": (sn.get("thumbnails", {}).get("default") or {}).get("url", ""),
+        "published_at": sn.get("publishedAt"),
+        "country": sn.get("country", ""),
+        "subscriber_count": int(st.get("subscriberCount", 0) or 0),
+        "total_views": int(st.get("viewCount", 0) or 0),
+        "video_count": int(st.get("videoCount", 0) or 0),
+        "uploads_playlist_id": cd.get("relatedPlaylists", {}).get("uploads", "UU" + c["id"][2:]),
+    }
+
+
+def channels_stats(db: Session, access_token: str, channel_ids: list[str]) -> dict[str, dict]:
+    """Estadísticas de hasta 50 canales en una llamada (1 unidad)."""
+    out = {}
+    for i in range(0, len(channel_ids), 50):
+        chunk = channel_ids[i:i + 50]
+        data = yt_get(db, "channels.list", {"part": "snippet,statistics,contentDetails", "id": ",".join(chunk)}, access_token)
+        for c in data.get("items", []):
+            out[c["id"]] = _channel_dict(c)
+    return out
+
+
+def recent_uploads(db: Session, access_token: str, uploads_playlist_id: str, max_results: int = 50) -> list[str]:
+    """IDs de los últimos videos de un canal (1 unidad)."""
+    data = yt_get(db, "playlistItems.list", {
+        "part": "contentDetails", "playlistId": uploads_playlist_id, "maxResults": min(max_results, 50),
+    }, access_token)
+    return [it["contentDetails"]["videoId"] for it in data.get("items", [])]
+
+
+def videos_details(db: Session, access_token: str, video_ids: list[str]) -> list[dict]:
+    """Detalles + estadísticas de hasta 50 videos por llamada (1 unidad cada 50)."""
+    out = []
+    for i in range(0, len(video_ids), 50):
+        chunk = video_ids[i:i + 50]
+        data = yt_get(db, "videos.list", {"part": "snippet,contentDetails,statistics", "id": ",".join(chunk)}, access_token)
+        for v in data.get("items", []):
+            sn, cd, st = v["snippet"], v["contentDetails"], v.get("statistics", {})
+            dur = parse_duration(cd.get("duration", ""))
+            out.append({
+                "video_id": v["id"],
+                "channel_id": sn.get("channelId", ""),
+                "title": sn.get("title", ""),
+                "description": sn.get("description", ""),
+                "tags": sn.get("tags", []),
+                "thumbnail_url": (sn.get("thumbnails", {}).get("high") or sn.get("thumbnails", {}).get("medium") or {}).get("url", ""),
+                "published_at": sn.get("publishedAt"),
+                "duration_seconds": dur,
+                "is_short": dur <= 60,
+                "views": int(st.get("viewCount", 0) or 0),
+                "likes": int(st.get("likeCount", 0) or 0),
+                "comments": int(st.get("commentCount", 0) or 0),
+            })
+    return out
