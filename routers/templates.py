@@ -59,6 +59,7 @@ def build_variables(language: str, sign_index: int | None, date: datetime) -> di
         "dia": str(date.day),
         "mes": mes,
         "mes_may": mes_may,
+        "MES": mes.upper(),
         "mes_num": f"{date.month:02d}",
         "anio": str(date.year),
         "dia_semana": WEEKDAYS[lang][date.weekday()],
@@ -88,7 +89,7 @@ VARIABLES_HELP = [
     ("{signo}", "Libra / Escorpio"), ("{signo_min}", "libra"), ("{signo_may}", "LIBRA"), ("{emoji}", "♎️"),
     ("{signo_en}", "Libra (siempre en inglés)"), ("{signo_en_min}", "libra (inglés)"),
     ("{fecha}", "EN: September 18 2026 · PT: 18 Setembro 2026 · ES: 18 De Septiembre 2026"), ("{fecha_may}", "SEPTEMBER 18 2026"), ("{fecha_larga}", "Viernes 18 De Septiembre 2026"),
-    ("{dia}", "18"), ("{mes}", "September / septiembre"), ("{mes_may}", "Septiembre"), ("{mes_num}", "09"), ("{anio}", "2026"),
+    ("{dia}", "18"), ("{mes}", "September / septiembre"), ("{mes_may}", "Septiembre"), ("{MES}", "SEPTEMBER"), ("{mes_num}", "09"), ("{anio}", "2026"),
     ("{dia_semana}", "Friday / viernes"), ("{dia_semana_may}", "Viernes"), ("{fecha_corta}", "18/09/2026"),
     ("{frase}", "La frase del día: se escribe una vez y sale en los 12 signos"),
 ]
