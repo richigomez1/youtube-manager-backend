@@ -97,7 +97,9 @@ def refresh_access_token(refresh_token: str) -> dict:
         "grant_type": "refresh_token",
     }, timeout=20)
     if r.status_code != 200:
-        raise HTTPException(401, "No se pudo renovar el acceso a YouTube; reconecta el canal")
+        # 400 (no 401): si fuera 401 el frontend lo confundiría con "sesión de la app expirada"
+        # y expulsaría al usuario al login. El problema es del canal, no de la sesión.
+        raise HTTPException(400, "El permiso de YouTube de este canal caducó o fue revocado. Ve a Canales propios y reconéctalo.")
     return r.json()
 
 
@@ -121,7 +123,7 @@ def yt_get(db: Session, endpoint: str, params: dict, access_token: str | None = 
     r = requests.get(f"{YT_API}/{resource}", params=params, headers=headers, timeout=30)
     log_quota(db, endpoint)
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"YouTube {endpoint}: {r.text[:300]}")
+        raise HTTPException(r.status_code if r.status_code != 401 else 400, f"YouTube {endpoint}: {r.text[:300]}")
     return r.json()
 
 
@@ -133,7 +135,7 @@ def yt_put(db: Session, endpoint: str, params: dict, body: dict, access_token: s
     )
     log_quota(db, endpoint)
     if r.status_code != 200:
-        raise HTTPException(r.status_code, f"YouTube {endpoint}: {r.text[:300]}")
+        raise HTTPException(r.status_code if r.status_code != 401 else 400, f"YouTube {endpoint}: {r.text[:300]}")
     return r.json()
 
 
@@ -298,7 +300,7 @@ def segments_to_text(segs: list[dict], max_chars: int = 90000) -> str:
     return text
 
 
-# ───────────────────────── Canales ajenos (datos públicos, sin OAuth: usamos el token propio igualmente) ─────────────────────────
+# ───────────────────────── Canales ajenos (datos públicos, con el token propio) ─────────────────────────
 def resolve_channel(db: Session, access_token: str, ref: str) -> dict:
     """
     Acepta: id (UC...), @handle, o URL de YouTube (youtube.com/@handle, /channel/UC..., /c/nombre, /user/nombre).
