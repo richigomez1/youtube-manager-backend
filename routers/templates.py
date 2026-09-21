@@ -79,6 +79,33 @@ def build_variables(language: str, sign_index: int | None, date: datetime) -> di
     return v
 
 
+YT_DESCRIPTION_MAX = 5000
+
+
+def trim_description(desc: str, limit: int = YT_DESCRIPTION_MAX - 30) -> tuple[str, bool]:
+    """
+    Si la descripción supera el límite de YouTube, quita líneas del bloque anterior al cierre
+    (normalmente listas de palabras clave), conservando el arranque y las últimas 3 líneas.
+    Devuelve (texto, recortada).
+    """
+    if len(desc) <= limit:
+        return desc, False
+    lines = desc.split("\n")
+    tail_n = 3
+    head, tail = lines[:-tail_n], lines[-tail_n:]
+    while len("\n".join(head + tail)) > limit and head:
+        # quitamos la última línea "de relleno" del cuerpo (no vacía y no encabezado corto)
+        idx = max((i for i, l in enumerate(head) if l.strip()), default=None)
+        if idx is None:
+            break
+        del head[idx]
+    out = "\n".join(head + tail)
+    # colapsar líneas vacías triples que hayan quedado
+    while "\n\n\n\n" in out:
+        out = out.replace("\n\n\n\n", "\n\n\n")
+    return out[:limit], True
+
+
 def render(text: str, variables: dict) -> str:
     def sub(m):
         return str(variables.get(m.group(1), m.group(0)))
@@ -255,9 +282,12 @@ def _render_template(db: Session, t: RotatingTemplate, body: RenderBody) -> dict
     phrase = _get_phrase(db, t.id)
     v["frase"] = phrase.get("text", "")
     tags = [x.strip() for x in render(t.tags_template, v).split(",") if x.strip()]
+    description, trimmed = trim_description(render(t.description_template, v))
     return {
         "title": " ".join(render(t.title_template, v).split()),
-        "description": render(t.description_template, v),
+        "description": description,
+        "description_chars": len(description),
+        "description_trimmed": trimmed,
         "tags": tags,
         "date_used": date.strftime("%Y-%m-%d"),
         "phrase": phrase,
